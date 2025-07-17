@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Inbox59 - Temporary Email</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-4">
+  <div class="max-w-xl w-full bg-gray-800 rounded-2xl shadow-lg p-6 space-y-6">
+    <h1 class="text-4xl font-bold text-center text-blue-400">Inbox59</h1>
+    <p class="text-center text-sm text-gray-300">Get your temporary email valid for 59 minutes.</p>
+
+    <div class="bg-gray-700 p-4 rounded-lg space-y-3">
+      <label class="block text-sm text-gray-400 mb-1">Your Temporary Email:</label>
+      <div class="flex items-center justify-between bg-gray-600 rounded px-3 py-2">
+        <input id="emailAddress" class="bg-transparent outline-none w-full text-sm" readonly>
+        <button id="copyBtn" onclick="copyEmail()" class="ml-2 px-3 py-1 bg-blue-500 rounded hover:bg-blue-600 text-white text-sm transition">Copy</button>
+      </div>
+      <button onclick="regenerateEmail()" class="w-full mt-2 px-3 py-2 bg-yellow-500 hover:bg-yellow-600 text-sm rounded text-white">🔁 Regenerate Email</button>
+    </div>
+
+    <div class="flex justify-between items-center mt-2">
+      <div>
+        <span class="text-gray-400">⏳ Time left:</span>
+        <div id="countdown" class="text-2xl font-mono text-yellow-400 mt-1">59:00</div>
+      </div>
+      <button id="refreshBtn" onclick="manualRefresh()" class="bg-indigo-500 px-4 py-2 rounded text-white text-sm hover:bg-indigo-600">🔄 Refresh</button>
+    </div>
+
+    <div id="refreshNotice" class="text-center text-xs text-gray-400 mt-1 hidden">Refreshing in <span id="refreshTimer">5</span> seconds...</div>
+
+    <div class="mt-6">
+      <h2 class="text-lg font-semibold text-blue-300 mb-2">📥 Inbox</h2>
+      <div id="messages" class="bg-gray-700 p-3 rounded h-52 overflow-y-auto text-sm space-y-2">
+        <p class="text-gray-400 text-center">No messages yet...<br>Please keep this window open to receive real-time emails.</p>
+      </div>
+    </div>
+
+    <footer class="text-center text-xs text-gray-500 mt-8">
+      &copy; 2025 Inbox59 • Temporary email service for 59 minutes only
+    </footer>
+  </div>
+
+<script>
+const emailInput = document.getElementById("emailAddress");
+const messagesBox = document.getElementById("messages");
+const copyBtn = document.getElementById("copyBtn");
+const countdownElement = document.getElementById("countdown");
+const refreshNotice = document.getElementById("refreshNotice");
+const refreshTimerSpan = document.getElementById("refreshTimer");
+const refreshBtn = document.getElementById("refreshBtn");
+
+let account = {}, token = "", timeLeft = 59 * 60, fetchInterval;
+
+// Countdown timer
+setInterval(() => {
+  if (timeLeft > 0) {
+    const mins = Math.floor(timeLeft / 60);
+    const secs = timeLeft % 60;
+    countdownElement.textContent = `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;
+    timeLeft--;
+  } else {
+    countdownElement.textContent = "Expired";
+  }
+}, 1000);
+
+// Create new Mail.tm account and fetch messages
+async function generateEmail() {
+  const domRes = await fetch("https://api.mail.tm/domains");
+  const domains = await domRes.json();
+  const domain = domains["hydra:member"][0].domain;
+
+  const randomName = Math.random().toString(36).substring(2, 10);
+  const email = `${randomName}@${domain}`;
+  const password = randomName + "!A1";
+
+  const res = await fetch("https://api.mail.tm/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ address: email, password })
+  });
+
+  if (res.status === 201) {
+    account = { email, password };
+    emailInput.value = email;
+    timeLeft = 59 * 60; // Reset timer
+    messagesBox.innerHTML = `<p class="text-gray-400 text-center">No messages yet...<br>Please keep this window open to receive real-time emails.</p>`;
+    await loginAndFetch();
+  } else {
+    emailInput.value = "Error creating email!";
+  }
+}
+
+// Regenerate button handler
+function regenerateEmail() {
+  clearInterval(fetchInterval);
+  generateEmail();
+}
+
+// Login and get JWT token
+async function loginAndFetch() {
+  const res = await fetch("https://api.mail.tm/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ address: account.email, password: account.password })
+  });
+
+  const data = await res.json();
+  token = data.token;
+  fetchInbox();
+  clearInterval(fetchInterval);
+  fetchInterval = setInterval(fetchInbox, 10000);
+}
+
+// Fetch inbox messages
+async function fetchInbox() {
+  try {
+    const res = await fetch("https://api.mail.tm/messages", {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    const inbox = await res.json();
+    if (!inbox["hydra:member"] || inbox["hydra:member"].length === 0) {
+      messagesBox.innerHTML = `<p class="text-gray-400 text-center">No messages yet...<br>Please keep this window open to receive real-time emails.</p>`;
+    } else {
+      messagesBox.innerHTML = "";
+      for (let msg of inbox["hydra:member"]) {
+        const msgRes = await fetch(`https://api.mail.tm/messages/${msg.id}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const msgDetail = await msgRes.json();
+
+        const fullBody = (msgDetail.text || "") + "\n" + (msgDetail.html || "");
+        const codeMatch = fullBody.match(/\b\d{4,8}\b/);
+        const code = codeMatch ? codeMatch[0] : null;
+
+        const div = document.createElement("div");
+        div.className = "mb-2 p-2 bg-gray-600 rounded relative";
+        div.innerHTML = `<strong>${msg.from.address}</strong><br>${msg.subject}<br><div class="text-xs text-gray-300 mt-1">${msg.text || msg.html}</div>`;
+
+        if (code) {
+          const copyCodeBtn = document.createElement("button");
+          copyCodeBtn.textContent = "Copy Code";
+          copyCodeBtn.className = "absolute top-2 right-2 px-2 py-1 text-xs bg-green-600 hover:bg-green-700 rounded text-white";
+          copyCodeBtn.onclick = () => {
+            navigator.clipboard.writeText(code);
+            copyCodeBtn.textContent = "Copied!";
+            setTimeout(() => copyCodeBtn.textContent = "Copy Code", 2000);
+          };
+          div.appendChild(copyCodeBtn);
+        }
+
+        messagesBox.appendChild(div);
+      }
+    }
+  } catch (e) {
+    messagesBox.innerHTML = `<p class='text-red-500 text-sm'>Error loading messages.</p>`;
+  }
+}
+
+// Copy email button
+function copyEmail() {
+  navigator.clipboard.writeText(emailInput.value).then(() => {
+    copyBtn.textContent = "Copied!";
+    copyBtn.classList.replace("bg-blue-500", "bg-green-500");
+    setTimeout(() => {
+      copyBtn.textContent = "Copy";
+      copyBtn.classList.replace("bg-green-500", "bg-blue-500");
+    }, 2000);
+  });
+}
+
+// Manual refresh logic
+function manualRefresh() {
+  refreshNotice.classList.remove("hidden");
+  refreshBtn.disabled = true;
+  refreshBtn.classList.replace("bg-indigo-500", "bg-red-500");
+
+  let refreshCounter = 5;
+  refreshTimerSpan.textContent = refreshCounter;
+
+  const interval = setInterval(() => {
+    refreshCounter--;
+    refreshTimerSpan.textContent = refreshCounter;
+    if (refreshCounter === 0) {
+      clearInterval(interval);
+      fetchInbox();
+      refreshNotice.classList.add("hidden");
+      refreshBtn.disabled = false;
+      refreshBtn.classList.replace("bg-red-500", "bg-indigo-500");
+    }
+  }, 1000);
+}
+
+// Initialize on load
+generateEmail();
+</script>
+</body>
+</html>
